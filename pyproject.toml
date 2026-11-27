@@ -19,6 +19,7 @@ dev = [
     "pre-commit>=4.0.1",
     "ruff>=0.7.3",
     "pytest>=8.0",
+    "tabulate>=0.9",
 ]
 
 [tool.pytest.ini_options]

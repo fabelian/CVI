@@ -28,8 +28,11 @@ class CviVolFitterOptions(BaseModel):
     butterfly_tolerance: float = Field(default=1e-6, ge=0.0)
     # Number of z points used to check for butterfly arbitrage after each solve.
     n_check_points: int = Field(default=400, ge=10)
+    # Keep the linearized butterfly constraints of all previous solves (cutting
+    # planes) instead of replacing them; avoids cycling of the linearization.
+    accumulate_butterfly_cuts: bool = Field(default=True)
     # Total number of QP solves (first without butterfly constraints).
-    n_iter_max: int = Field(default=4, ge=1)
+    n_iter_max: int = Field(default=6, ge=1)
 
     # Data filters.
     min_t_e: float = Field(default=1.0 / 365.0, ge=0.0)
