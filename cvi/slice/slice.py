@@ -1,10 +1,11 @@
-import numpy as np
-import numpy.typing as npt
 from math import sqrt
-from scipy.interpolate import splev
 from typing import Self
 
-from .params import CviRealParams, CviCubicBSplineParams
+import numpy as np
+import numpy.typing as npt
+from scipy.interpolate import splev
+
+from .params import CviCubicBSplineParams, CviRealParams
 
 
 class CviSlice:
@@ -87,13 +88,13 @@ class CviSlice:
             z >= self.real_params.locs[0], 0.0, z - self.real_params.locs[0]
         )
         return (
-            splev(z, self.spline_params.tck(), ext=3)
+            splev(z, self.spline_params.tck, ext=3)
             + right_extrap * self.spline_params.deriv_right
             + left_extrap * self.spline_params.deriv_left,
-            splev(z, self.spline_params.tck(), der=1, ext=1)
+            splev(z, self.spline_params.tck, der=1, ext=1)
             + (z > self.real_params.locs[-1]) * self.spline_params.deriv_right
             + (z < self.real_params.locs[0]) * self.spline_params.deriv_left,
-            splev(z, self._spline_params.tck(), der=2, ext=1),
+            splev(z, self.spline_params.tck, der=2, ext=1),
         )
 
     def vol_deriv1_deriv2_z(
@@ -110,23 +111,26 @@ class CviSlice:
         return vols, deriv1_vols_z, deriv2_vols_z
 
     def vol_deriv1_deriv2_k(
-        self, k: npt.NDArray[np.float64] | float
+        self, strike: npt.NDArray[np.float64] | float
     ) -> tuple[
         npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]
     ]:
-        z = self.k_to_z(k)
+        """Volatility and its first two derivatives with respect to the strike K.
 
-        vals = self.var_deriv1_deriv2_z(z)
+        Uses z = log(K / F) / (sigma_star * sqrt(T)), so dz/dK = 1 / (K * z_denom).
+        """
+        strike = np.asarray(strike, dtype=float)
+        z = self.k_to_z(strike)
 
-        vols = np.sqrt(vals[0])
+        vols, dvol_dz, d2vol_dz2 = self.vol_deriv1_deriv2_z(z)
 
-        deriv1_vols_z = vals[1] / (2.0 * vols)
-        deriv1_vols_k = deriv1_vols_z / k
+        dz_dk = 1.0 / (strike * self._z_denom)
+        d2z_dk2 = -1.0 / (strike**2 * self._z_denom)
 
-        deriv2_vols_z = (0.5 * vals[2] - deriv1_vols_z**2.0) / vols
-        deriv2_vols_k = deriv2_vols_z / k - deriv1_vols_z / (k**2.0)
+        dvol_dk = dvol_dz * dz_dk
+        d2vol_dk2 = d2vol_dz2 * dz_dk**2 + dvol_dz * d2z_dk2
 
-        return vols, deriv1_vols_k, deriv2_vols_k
+        return vols, dvol_dk, d2vol_dk2
 
     def k_to_z(self, k: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         return np.log(k / self._ref_fwd) / self._z_denom

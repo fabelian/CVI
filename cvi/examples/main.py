@@ -1,10 +1,9 @@
-from matplotlib import pyplot as plt
-import numpy as np
 import time
 
-from cvi.slice import CviSlice
-from cvi.node import CviNode
-from cvi.params import CviRealParams
+import numpy as np
+from matplotlib import pyplot as plt
+
+from cvi.slice import CviNode, CviRealParams, CviSlice
 
 n_trials = 1000
 
@@ -35,7 +34,7 @@ for i in range(n_trials):
     vols = slc.var_deriv1_deriv2_z(log_mns)
     vols_coarse = slc.var_deriv1_deriv2_z(log_mns_coarse)
 end = time.perf_counter()
-print(f"{end - start:.5f}s --- {(end - start)/n_trials:.5f}s/it")
+print(f"{end - start:.5f}s --- {(end - start) / n_trials:.5f}s/it")
 
 # start = time.perf_counter()
 # for _ in range(n_trials):
