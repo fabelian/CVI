@@ -1,16 +1,19 @@
+from typing import Self, cast
+
 import numpy as np
 import numpy.typing as npt
 from scipy.interpolate import splev
 from scipy.linalg import solve
 from scipy.sparse import csc_matrix
-from typing import cast, Self
 
 from .node import CviNode
 
 
 class CviRealParams:
     atm_var: float
-    skew: float  # d variance / d z
+    # Internal skew = d variance / d z. The constructor takes the trader-facing
+    # convention `skew = -100 * d variance / d z` and converts it.
+    skew: float
     nodes: list[CviNode]
     crvs: list[float]
     locs: list[float]
@@ -23,7 +26,7 @@ class CviRealParams:
     ):
         self.nodes = sorted(nodes, key=lambda n: n.loc)
 
-        if not any(node.is_zero for node in self.nodes):
+        if not any(node.is_zero() for node in self.nodes):
             raise ValueError("Nodes must contain a node at z = 0")
         if self.nodes[0].crv != 0.0:
             raise ValueError("First node must have a curvature of 0")
@@ -42,7 +45,12 @@ class CviRealParams:
 
         atm_var = cast(float, splev(0.0, p.tck))
         skew = cast(float, splev(0.0, p.tck, der=1))
-        crvs = splev(locs, p.tck, der=2)
+        crvs = np.asarray(splev(locs, p.tck, der=2), dtype=float)
+        # Edge convexities are constrained to zero; remove solver round-off.
+        scale = max(float(np.max(np.abs(crvs))), 1.0)
+        for i in (0, -1):
+            if abs(crvs[i]) <= 1e-7 * scale:
+                crvs[i] = 0.0
 
         nodes = [CviNode(loc, crv) for loc, crv in zip(locs, crvs)]
 
