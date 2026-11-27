@@ -96,4 +96,4 @@ def test_spx_example_is_arbitrage_free():
     chain = pd.read_csv(DATA, parse_dates=["expiry"])
     res = CviVolFitter().fit(chain, NODES, CviVolFitterOptions())
     check_surface(res, chain, np.linspace(-6, 6, 2001), min_inside=0.99)
-    assert res.n_iterations <= 4
+    assert res.n_iterations <= 4  # converges in 3 solves with these knots

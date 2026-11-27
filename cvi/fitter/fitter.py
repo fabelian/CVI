@@ -67,6 +67,11 @@ class CviFitResult:
     objective: float
     dropped_expiries: list[pd.Timestamp] = field(default_factory=list)
     n_crossed_quotes: int = 0
+    # problem size of each solve: non-zeros of P (upper triangle) and A, rows of A
+    p_nnz: list[int] = field(default_factory=list)
+    a_nnz: list[int] = field(default_factory=list)
+    n_constraints: list[int] = field(default_factory=list)
+    n_variables: int = 0
 
     @property
     def success(self) -> bool:
@@ -157,6 +162,7 @@ class _QP:
         start = time.perf_counter()
         sol = cb.DefaultSolver(P, self.q, A, b, cones, settings).solve()
         elapsed = time.perf_counter() - start
+        self.last_size = (P.nnz, A.nnz, A.shape[0])
         return str(sol.status), np.asarray(sol.x), float(sol.obj_val), elapsed
 
 
@@ -357,6 +363,7 @@ class CviVolFitter:
 
         # --- sequential solves with linearized butterfly constraints
         statuses, times, violations = [], [], []
+        p_nnz, a_nnz, n_cons = [], [], []
         bf_rows: list[tuple[sparse.csr_matrix, FloatArr]] = []
         # interior grid plus interior knots, where the piecewise-linear convexity kinks
         # and a denser set in the two edge segments, next to the edge-knot skew bounds
@@ -372,26 +379,32 @@ class CviVolFitter:
         )
         z_chk = np.linspace(basis.z0, basis.zn, opts.n_check_points)
         rows_chk = [basis.rows(z_chk, d) for d in range(3)]
-        rows_bf = [basis.rows(z_bf, d) for d in range(3)]
+        # per expiry: constraint points, refined with the check points found in violation
+        z_sets = [z_bf.copy() for _ in exps]
         x = np.zeros(qp.n_var)
         obj = np.nan
         for it in range(opts.n_iter_max):
             status, x, obj, elapsed = qp.solve(bf_rows, opts.verbose)
             statuses.append(status)
             times.append(elapsed)
+            p_nnz.append(qp.last_size[0])
+            a_nnz.append(qp.last_size[1])
+            n_cons.append(qp.last_size[2])
             n_viol = 0
             for j, e in enumerate(exps):
                 a = x[offsets_alpha[j] : offsets_alpha[j] + m]
                 v, dv, d2v = (r @ a for r in rows_chk)
                 s, c = dv / e.v_star, d2v / e.v_star
                 gv = bf.g(np.maximum(v, 1e-12), s, z_chk * e.z_to_k, e.v_star, e.t_e)
-                n_viol += int(np.sum(c - gv < -opts.butterfly_tolerance))
+                bad = c - gv < -opts.butterfly_tolerance
+                n_viol += int(np.sum(bad))
+                if bad.any():
+                    z_sets[j] = np.union1d(z_sets[j], z_chk[bad])
             violations.append(n_viol)
             if status != "Solved" or n_viol == 0 or it == opts.n_iter_max - 1:
                 break
-            bf_rows = self._butterfly_rows(
-                qp, basis, exps, offsets_alpha, x, z_bf, rows_bf
-            )
+            new_rows = self._butterfly_rows(qp, basis, exps, offsets_alpha, x, z_sets)
+            bf_rows = bf_rows + new_rows if opts.accumulate_butterfly_cuts else new_rows
 
         self._slices = {}
         for j, e in enumerate(exps):
@@ -409,10 +422,14 @@ class CviVolFitter:
             objective=obj,
             dropped_expiries=dropped,
             n_crossed_quotes=sum(e.n_crossed for e in exps),
+            p_nnz=p_nnz,
+            a_nnz=a_nnz,
+            n_constraints=n_cons,
+            n_variables=qp.n_var,
         )
 
     @staticmethod
-    def _butterfly_rows(qp, basis, exps, offsets_alpha, x, z_bf, rows_bf):
+    def _butterfly_rows(qp, basis, exps, offsets_alpha, x, z_sets):
         """Linearized no-butterfly-arbitrage constraints (eqs. 5, 18, 19)."""
         out = []
         m = basis.m
@@ -421,7 +438,8 @@ class CviVolFitter:
         for j, e in enumerate(exps):
             oa = offsets_alpha[j]
             a = x[oa : oa + m]
-            B0, B1, B2 = rows_bf
+            z_bf = z_sets[j]
+            B0, B1, B2 = (basis.rows(z_bf, d) for d in range(3))
             v_ref = np.maximum(B0 @ a, 1e-8)
             s_ref = (B1 @ a) / e.v_star
             k = z_bf * e.z_to_k
